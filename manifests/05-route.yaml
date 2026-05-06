@@ -1,0 +1,19 @@
+apiVersion: route.openshift.io/v1
+kind: Route
+metadata:
+  name: mempalace
+  namespace: mempalace
+  labels:
+    app: mempalace
+    component: server
+spec:
+  to:
+    kind: Service
+    name: mempalace
+    weight: 100
+  port:
+    targetPort: http
+  tls:
+    termination: edge
+    insecureEdgeTerminationPolicy: Redirect
+  wildcardPolicy: None

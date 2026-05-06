@@ -1,0 +1,16 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mempalace-data
+  namespace: mempalace
+  labels:
+    app: mempalace
+    component: storage
+spec:
+  accessModes:
+  - ReadWriteOnce
+  resources:
+    requests:
+      storage: 20Gi
+  # Uncomment and adjust for your cluster's storage class:
+  # storageClassName: ibmc-vpc-block-10iops-tier

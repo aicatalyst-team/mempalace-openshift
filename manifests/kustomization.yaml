@@ -1,0 +1,12 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: mempalace
+
+resources:
+- 01-namespace.yaml
+- 02-pvc.yaml
+- 03-deployment.yaml
+- 04-service.yaml
+# Uncomment to enable external access:
+# - 05-route.yaml

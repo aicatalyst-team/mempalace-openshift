@@ -1,0 +1,62 @@
+# UBI 9 Python Dockerfile for MemPalace on OpenShift AI
+# Based on Red Hat Universal Base Image 9 Python 3.11
+
+FROM registry.access.redhat.com/ubi9/python-311:latest
+
+# Metadata
+LABEL name="mempalace" \
+      version="3.3.3" \
+      description="Local-first AI memory system for OpenShift AI" \
+      maintainer="MemPalace Project"
+
+# Switch to root for package installation
+USER 0
+
+# Install system dependencies for ChromaDB
+# ChromaDB needs sqlite3 and compilation tools
+RUN dnf install -y \
+    gcc \
+    gcc-c++ \
+    sqlite-devel \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
+
+# Switch back to default user (1001 in UBI Python images)
+USER 1001
+
+# Set working directory
+WORKDIR /opt/app-root/src
+
+# Copy project files
+COPY --chown=1001:0 . .
+
+# Install MemPalace with all dependencies including HTTP server
+# Use --no-cache-dir to reduce image size
+# Install pysqlite3-binary first for ChromaDB compatibility (UBI 9 has old sqlite)
+RUN pip install --no-cache-dir pysqlite3-binary && \
+    pip install --no-cache-dir -e ".[dev,server]"
+
+# Create sitecustomize.py to force pysqlite3 usage (ChromaDB needs sqlite >= 3.35.0)
+RUN echo -e '__import__("pysqlite3")\nimport sys\nsys.modules["sqlite3"] = sys.modules.pop("pysqlite3")' \
+    > /opt/app-root/lib64/python3.11/site-packages/sitecustomize.py
+
+# Environment variables
+ENV MEMPALACE_HOME=/opt/app-root/data
+ENV PYTHONUNBUFFERED=1
+
+# Create data directory with correct permissions for OpenShift
+# OpenShift uses arbitrary UID but always GID 0
+RUN mkdir -p /opt/app-root/data && \
+    chgrp -R 0 /opt/app-root/data && \
+    chmod -R g=u /opt/app-root/data
+
+# Volume for palace data
+VOLUME ["/opt/app-root/data"]
+
+# Expose MCP HTTP server port
+EXPOSE 8000
+
+# Default command: run HTTP server for Kubernetes/OpenShift deployment
+# Can be overridden at runtime for different operations (e.g., CLI usage)
+ENTRYPOINT ["mempalace-mcp-http"]
+CMD ["--host", "0.0.0.0", "--port", "8000"]
