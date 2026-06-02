@@ -11,7 +11,49 @@ Deploy [MemPalace](https://github.com/MemPalace/mempalace), a local-first AI mem
 
 **Architecture:**
 
-![MemPalace Architecture](diagram-mempalace-architecture.mmd)
+```mermaid
+graph TB
+    subgraph cluster["OpenShift Cluster"]
+        subgraph pod["MemPalace Pod (UBI 9 Python 3.11)"]
+            http["FastAPI HTTP Server (Port 8000)"]
+            health["GET /health → Liveness probe"]
+            ready["GET /ready → Readiness (ChromaDB)"]
+            ws["WS /mcp → WebSocket MCP endpoint"]
+
+            http --> health
+            http --> ready
+            http --> ws
+
+            mcp["MCP Server Core<br/>JSON-RPC 2.0 protocol<br/>Tools: store, search, tag, clear"]
+            chroma["ChromaDB Vector Store<br/>Semantic memory search<br/>Persistent storage"]
+
+            ws --> mcp
+            mcp --> chroma
+        end
+
+        storage["PersistentVolumeClaim<br/>10Gi RWO storage<br/>ChromaDB data"]
+        pod -.->|"mounts"| storage
+    end
+
+    clients["MCP Clients<br/>(AI agents, applications)"] -->|"WebSocket"| route["OpenShift Route<br/>TLS termination"]
+    route --> http
+
+    k8s["Kubernetes Probes"] -.->|"health checks"| health
+    k8s -.->|"readiness checks"| ready
+
+    style cluster fill:#f5f5f5,stroke:#333,stroke-width:2px
+    style pod fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+    style http fill:#fff,stroke:#666
+    style health fill:#fff,stroke:#666
+    style ready fill:#fff,stroke:#666
+    style ws fill:#fff,stroke:#666
+    style mcp fill:#fff,stroke:#666
+    style chroma fill:#fff,stroke:#666
+    style storage fill:#fff3e0,stroke:#f57c00
+    style clients fill:#fff,stroke:#666
+    style route fill:#fff,stroke:#666
+    style k8s fill:#e3f2fd,stroke:#1976d2
+```
 
 The deployment consists of:
 - **FastAPI HTTP Server** with health probes and WebSocket MCP endpoint
