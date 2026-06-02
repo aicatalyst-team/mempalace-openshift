@@ -10,21 +10,15 @@ Deploy [MemPalace](https://github.com/MemPalace/mempalace), a local-first AI mem
 - Complete deployment manifests
 
 **Architecture:**
-```
-┌──────────────────────────────────────────────────────┐
-│  MemPalace Pod (UBI 9 Python 3.11)                  │
-│                                                      │
-│  FastAPI HTTP Server (Port 8000)                    │
-│  ├─ GET  /health  → Liveness probe                  │
-│  ├─ GET  /ready   → Readiness probe (ChromaDB)      │
-│  └─ WS   /mcp     → WebSocket MCP endpoint          │
-│                                                      │
-│  MCP Server (29 tools: search, mine, query)         │
-│  └─ ChromaDB + Knowledge Graph backend              │
-│                                                      │
-│  Volume: /opt/app-root/data (20Gi PVC)              │
-└──────────────────────────────────────────────────────┘
-```
+
+![MemPalace Architecture](diagram-mempalace-architecture.mmd)
+
+The deployment consists of:
+- **FastAPI HTTP Server** with health probes and WebSocket MCP endpoint
+- **MCP Server Core** providing 29 tools (search, mine, query, tag, clear)
+- **ChromaDB Vector Store** for semantic memory search
+- **PersistentVolumeClaim** (20Gi) for durable storage
+- **OpenShift Route** with TLS termination for external access
 
 ## Quick Start
 
