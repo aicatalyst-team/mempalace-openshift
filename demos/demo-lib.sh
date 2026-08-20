@@ -111,6 +111,8 @@ demo_wait() {
     if [ "${STEP_MODE:-0}" = "1" ]; then
         echo -e "${CYAN}▶ Press ENTER to continue...${NC}"
         read -r
+        # Clear the prompt line so it doesn't clutter the recording
+        printf '\033[1A\033[2K'
     else
         sleep "${1:-5}"
     fi
