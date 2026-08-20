@@ -42,3 +42,4 @@ htmlcov/
 # Local configuration
 *.local.yaml
 secrets/
+demos/_archive/
