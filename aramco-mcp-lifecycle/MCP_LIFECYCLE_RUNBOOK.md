@@ -74,8 +74,50 @@ oc get deploy -n mcp-lifecycle-operator-system \
 
 > **What to say:** "You have an MCP server. It runs locally, maybe in Docker. Here's what it looks like to deploy it on OpenShift AI. You write one YAML — an MCPServer custom resource — and the operator does the rest."
 
+### The MCPServer CR — this is ALL you write
+
+```yaml
+apiVersion: mcp.x-k8s.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: mempalace
+  namespace: mempalace
+spec:
+  source:
+    type: ContainerImage
+    containerImage:
+      ref: quay.io/aicatalyst/mempalace:operator-v2
+  config:
+    port: 8000
+    path: /mcp
+    arguments: ["--transport", "streamable-http", "--host", "0.0.0.0", "--port", "8000"]
+    env:
+    - name: MEMPALACE_HOME
+      value: /opt/app-root/data
+    storage:
+    - path: /opt/app-root/data
+      permissions: ReadWrite
+      source:
+        type: EmptyDir
+        emptyDir: { sizeLimit: 10Gi }
+  runtime:
+    replicas: 1
+    resources:
+      requests: { memory: "2Gi", cpu: "500m" }
+      limits:   { memory: "4Gi", cpu: "2000m" }
+    health:
+      livenessProbe:
+        httpGet: { path: /health, port: 8000 }
+      readinessProbe:
+        httpGet: { path: /ready, port: 8000 }
+```
+
+> **What to point out:** "That's it — a container image, a port, a path, and resource limits. No Deployment, no Service, no Ingress. The operator creates all of that."
+
+### Verify what the operator created
+
 ```bash
-# The MCPServer CR — this is ALL you write
+# The live MCPServer resource — operator reconciled it
 oc get mcpserver -n mempalace -o wide
 ```
 
