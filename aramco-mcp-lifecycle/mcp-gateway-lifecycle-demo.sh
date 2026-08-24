@@ -105,6 +105,37 @@ act "2" "Deploy an MCP Server"
 
 section_header "The MCPServer Custom Resource"
 
+echo -e "${WHITE}  This is ALL you write — one CR, the operator does the rest:${NC}"
+echo ""
+echo -e "${CYAN}  apiVersion:${NC} mcp.x-k8s.io/v1alpha1"
+echo -e "${CYAN}  kind:${NC}       MCPServer"
+echo -e "${CYAN}  metadata:${NC}"
+echo -e "${CYAN}    name:${NC}     mempalace"
+echo -e "${CYAN}  spec:${NC}"
+echo -e "${CYAN}    source:${NC}"
+echo -e "${CYAN}      type:${NC} ContainerImage"
+echo -e "${CYAN}      containerImage:${NC}"
+echo -e "${CYAN}        ref:${NC} quay.io/aicatalyst/mempalace:operator-v2"
+echo -e "${CYAN}    config:${NC}"
+echo -e "${CYAN}      port:${NC} 8000"
+echo -e "${CYAN}      path:${NC} /mcp"
+echo -e "${CYAN}      arguments:${NC} [\"--transport\", \"streamable-http\", ...]"
+echo -e "${CYAN}      storage:${NC}"
+echo -e "${CYAN}      - path:${NC} /opt/app-root/data"
+echo -e "${CYAN}        permissions:${NC} ReadWrite"
+echo -e "${CYAN}    runtime:${NC}"
+echo -e "${CYAN}      replicas:${NC} 1"
+echo -e "${CYAN}      resources:${NC} { requests: 2Gi/500m, limits: 4Gi/2000m }"
+echo -e "${CYAN}      health:${NC}"
+echo -e "${CYAN}        livenessProbe:${NC}  { httpGet: /health:8000 }"
+echo -e "${CYAN}        readinessProbe:${NC} { httpGet: /ready:8000 }"
+echo ""
+echo -e "${GRAY}  ↑ Container image, port, path, resources. No Deployment, no Service, no Ingress.${NC}"
+echo ""
+demo_wait 4
+
+section_header "What the Operator Created"
+
 run_command "oc get mcpserver -n ${NS_MEMPALACE} -o wide" "MCPServer status"
 
 echo -e "${CYAN}# What the operator did automatically:${NC}"
@@ -157,7 +188,33 @@ print(f"Protocol: {proto}")
 ' 2>&1
 
 echo ""
-show_result "success" "MCP server deployed and responding — protocol handshake confirmed"
+demo_wait "$RESULT_PAUSE"
+
+section_header "Tool Discovery — the 29 tools"
+
+echo -e "${GRAY}# The operator discovered these tools during deployment:${NC}"
+echo ""
+simulate_typing "oc exec -n ${NS_MEMPALACE} deploy/mempalace -- python3 -c '...tools/list...'"
+demo_wait "$COMMAND_PAUSE"
+
+oc exec -n ${NS_MEMPALACE} deploy/mempalace -- python3 -c '
+import urllib.request, json
+req = urllib.request.Request("http://localhost:8000/mcp",
+    data=json.dumps({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}).encode(),
+    headers={"Content-Type":"application/json"})
+r = json.loads(urllib.request.urlopen(req).read())
+tools = r["result"]["tools"]
+print(f"  Tools discovered: {len(tools)}")
+print()
+for t in tools[:8]:
+    print(f"    - {t[\"name\"]}")
+if len(tools) > 8:
+    print(f"    ... and {len(tools)-8} more")
+' 2>&1
+
+echo ""
+show_result "success" "MCP server deployed and responding — protocol handshake confirmed, ${NS_MEMPALACE} tools discovered"
+demo_wait "$RESULT_PAUSE"
 
 ###############################################################################
 # ACT 3: FEDERATE VIA MCP GATEWAY
