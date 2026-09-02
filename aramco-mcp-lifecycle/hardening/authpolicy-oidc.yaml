@@ -1,0 +1,67 @@
+# =============================================================================
+# Gap 1 fix — OIDC authentication at the MCP Gateway edge
+# =============================================================================
+# Enforces JWT/OIDC auth on the gateway's `mcp` listener via Kuadrant AuthPolicy
+# (Authorino). This capability already ships in Red Hat Connectivity Link (the
+# productized Kuadrant); this manifest simply turns it on. It is NOT a new
+# platform capability — see hardening/README.md for the "whose onus" analysis.
+#
+# Schema verified 2026-09-02 against:
+#   - Kuadrant mcp-gateway auth guide (spec.defaults structure, .well-known
+#     exclusion): https://github.com/Kuadrant/mcp-gateway/blob/main/docs/guides/authentication.md
+#   - Kuadrant AuthPolicy reference (apiVersion, targetRef, named-map auth):
+#     https://docs.kuadrant.io/latest/kuadrant-operator/doc/reference/authpolicy/
+#   - Authorino jwt.issuerUrl semantics (OIDC discovery + JWKS caching):
+#     https://github.com/Kuadrant/authorino/blob/main/docs/features.md
+#
+# Prerequisites:
+#   - MCP Gateway deployed with a listener named `mcp` (see the runbook).
+#   - An OIDC issuer reachable FROM INSIDE the cluster (Keycloak / Red Hat build
+#     of Keycloak). The `iss` claim in issued tokens MUST match `issuerUrl`
+#     below, or Authorino rejects the token (the #1 real-world failure mode).
+# =============================================================================
+apiVersion: kuadrant.io/v1
+kind: AuthPolicy
+metadata:
+  name: mcp-auth-policy
+  # MUST be the same namespace as the Gateway — AuthPolicy can only target
+  # resources in its own namespace.
+  namespace: mcp-gateway-system
+spec:
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: Gateway
+    name: mcp-gateway
+    sectionName: mcp            # scope to the `mcp` listener only
+  defaults:
+    # Keep OIDC discovery + protected-resource metadata public so the MCP client
+    # can bootstrap its login flow before it holds a token. Without this, the
+    # 401 -> discover -> authenticate handshake cannot start.
+    when:
+      - predicate: "!request.path.contains('/.well-known')"
+    rules:
+      authentication:
+        "keycloak":
+          jwt:
+            # Realm issuer URL. Authorino fetches
+            # <issuerUrl>/.well-known/openid-configuration at reconcile time,
+            # then the jwks_uri from it, and validates the JWS in-process
+            # (no per-request IdP round-trip).
+            issuerUrl: https://REPLACE-keycloak-host/realms/REPLACE-realm
+
+      # -----------------------------------------------------------------------
+      # Audience / scope / role checks are NOT a `jwt.aud` field. They are
+      # expressed as authorization rules over the decoded token claims
+      # (auth.identity.*), using CEL / patternMatching / opa. Add them here once
+      # the realm's audience + roles are finalized. See:
+      #   https://github.com/Kuadrant/mcp-gateway/blob/main/docs/guides/authorization.md
+      #   https://developers.redhat.com/articles/2025/12/12/advanced-authentication-authorization-mcp-gateway
+      #
+      # authorization:
+      #   "audience-check":
+      #     patternMatching:
+      #       patterns:
+      #         - selector: auth.identity.aud
+      #           operator: incl
+      #           value: mcp-gateway
+      # -----------------------------------------------------------------------
