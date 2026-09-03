@@ -1,0 +1,53 @@
+# =============================================================================
+# Gap 2 fix — ensure the MCP Gateway cannot be bypassed (backstop, not a substitute)
+# =============================================================================
+# The MCP Gateway is an L7 component: it does federation, per-tool authz, OIDC
+# termination and protocol-aware routing. It does NOT (and cannot) govern L3/L4
+# reachability between pods. This NetworkPolicy is the "dumb backstop" that makes
+# the gateway's rich L7 policy MANDATORY in the path rather than optional for an
+# in-cluster actor. See hardening/README.md ("What's the point of the gateway").
+#
+# Effect: only pods in the mcp-gateway-system namespace may reach the MemPalace
+# backend on :8000. Everything else is denied. Swap the podSelector/namespace to
+# generalize to any MCP backend.
+#
+# NOTE: OpenShift's default OVN-Kubernetes network plugin enforces NetworkPolicy.
+# A namespace with NO ingress NetworkPolicy allows all ingress; adding this policy
+# switches the selected pods to default-deny + the explicit allow below.
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: mempalace-allow-gateway-only
+  namespace: mempalace
+spec:
+  podSelector:
+    matchLabels:
+      app: mempalace          # match the MemPalace backend pods
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              # Every namespace carries this immutable label set by Kubernetes.
+              kubernetes.io/metadata.name: mcp-gateway-system
+      ports:
+        - protocol: TCP
+          port: 8000
+---
+# Optional mesh-layer alternative / complement (RHCL rides Istio):
+# PeerAuthentication STRICT + an AuthorizationPolicy achieve the same guarantee
+# with mTLS identity instead of namespace selectors. Uncomment if using OSSM.
+#
+# apiVersion: security.istio.io/v1
+# kind: PeerAuthentication
+# metadata:
+#   name: mempalace-mtls-strict
+#   namespace: mempalace
+# spec:
+#   selector:
+#     matchLabels:
+#       app: mempalace
+#   mtls:
+#     mode: STRICT

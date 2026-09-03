@@ -70,6 +70,53 @@ Caveats to state to the customer:
 - **`iss` / host reachability** is the most common failure: `issuerUrl` must be
   reachable in-cluster and must match the `iss` claim in issued tokens.
 
+## Gap 2 — implemented here
+
+[`networkpolicy-backend-lockdown.yaml`](networkpolicy-backend-lockdown.yaml) — the
+backstop that makes the gateway non-bypassable (only `mcp-gateway-system` may reach
+the backend on `:8000`), with a commented Istio mTLS alternative. This does not
+replace the gateway; it guarantees the gateway's L7 policy is in the path. See
+["What's the point of the gateway"](#why-gap-2-is-not-a-gateway-bug) above.
+
+## Gap 3 — implemented here
+
+[`mempalace-statefulset-pvc.yaml`](mempalace-statefulset-pvc.yaml) — durable
+storage via a StatefulSet + `volumeClaimTemplate`, deployed **outside** the MCP
+Lifecycle Operator (the `MCPServer` CRD has no PVC source through v0.3.0).
+Trade-off: durability at the cost of the operator's lifecycle management. The
+strategic fix is the upstream FR so the operator can own a PVC-backed server —
+this manifest is the stopgap.
+
+## Verification
+
+[`verify.sh`](verify.sh) runs the live test sequence for all three gaps against an
+authenticated cluster (auth 401/200, backend-bypass probe, data-survives-restart).
+Live verification is pending a fresh `oc login` to
+`api.ocp-gb.ibm.redhataicatalyst.com`.
+
+```bash
+oc login --token=<fresh> --server=https://api.ocp-gb.ibm.redhataicatalyst.com:6443
+GATEWAY_URL=http://<gateway>:8443 CONFIRM_G3=1 ./verify.sh
+```
+
+Manifests are offline-validated (YAML well-formedness, schema spot-checks,
+cross-artifact selector alignment).
+
+### Live verification results (2026-09-02, `api.ocp-gb.ibm.redhataicatalyst.com`)
+
+Gaps proven on the live cluster (read-only), fixes verified in a throwaway
+`mcp-hardening-test` namespace so the running Aramco demo was never touched:
+
+| Gap | Proven real (live) | Fix verified |
+|-----|--------------------|--------------|
+| **1 — OIDC** | Unauthenticated `POST /mcp initialize` → **HTTP 200** | ⏳ Pending — `AuthPolicy` targets the shared gateway listener; needs a maintenance window + a Keycloak realm/client. RHBK + Authorino confirmed present. |
+| **2 — bypass** | Pod in `default` reached backend `:8000` directly → **HTTP 200** | ✅ With NetworkPolicy: `default` → **blocked** (conn code 000); `mcp-gateway-system` → **200**. Bypass closed, gateway path intact. |
+| **3 — storage** | Operator pod mounts `EmptyDir`; 20Gi PVC orphaned; pod restarted 2× | ✅ StatefulSet+PVC: wrote marker, deleted pod, marker survived restart. |
+
+Gap 1's fix is intentionally **not** applied to the live gateway (it would 401 the
+demo's unauthenticated flow). It will be verified in a window using the on-cluster
+RHBK issuer, then this table updated before any "verified" claim reaches the blog.
+
 ## Official documentation cross-reference
 
 ### Lifecycle management (MCP Lifecycle Operator)
