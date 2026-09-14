@@ -43,7 +43,22 @@ semantic search.
 | Federation | Kuadrant MCP Gateway (Tech Preview) | `mcp-gateway-system` |
 | Tools/data | MemPalace MCP server (ChromaDB) | `mempalace` ns |
 
-## Run
+## Hosted demo (click-to-run UI)
+
+A containerized web UI runs the round trip and visualizes every hop. Deployed
+live at **https://maas-mcp-demo-maas-mcp-demo.apps.ocp-gb.ibm.redhataicatalyst.com**
+(namespace `maas-mcp-demo`).
+
+Rebuild/redeploy (builds in-cluster — no local podman/registry needed):
+```bash
+oc login --token=<fresh> --server=https://api.ocp-gb.ibm.redhataicatalyst.com:6443
+./webapp/build-and-deploy.sh
+```
+The image is built via an OpenShift binary build to the internal registry; the
+`maas-mcp-creds` Secret is populated from cluster values at deploy time (no
+secrets in git). Uses a dedicated namespace because `aramco-demo` is Kueue-gated.
+
+## Run (CLI)
 
 ```bash
 oc login --token=<fresh> --server=https://api.ocp-gb.ibm.redhataicatalyst.com:6443
