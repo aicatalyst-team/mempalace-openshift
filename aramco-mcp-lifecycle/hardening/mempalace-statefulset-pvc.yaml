@@ -1,0 +1,102 @@
+# =============================================================================
+# Gap 3 fix — durable storage via StatefulSet + PVC (outside the operator)
+# =============================================================================
+# WHY THIS EXISTS: OpenShift already supports PVCs natively — the gap is narrow:
+# the kubernetes-sigs MCPServer CRD exposes only ConfigMap/Secret/EmptyDir
+# storage sources (no PVC) through v0.3.0. Until an upstream feature request adds
+# a PVC source, durable MemPalace requires deploying the server WITHOUT the
+# MCP Lifecycle Operator, as a StatefulSet with a volumeClaimTemplate.
+#
+# TRADE-OFF (state this to the customer): you gain durability but lose the
+# operator's lifecycle management (declarative MCPServer CR, automatic protocol
+# handshake/probes). This is a stopgap; the strategic fix is the upstream FR
+# so the operator can own a PVC-backed server. Tracked in README.md.
+#
+# The container config mirrors the operator's MCPServer CR (image, args, env,
+# probes, port) so behavior is identical apart from storage + management.
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: mempalace
+  namespace: mempalace
+  labels:
+    app: mempalace
+spec:
+  selector:
+    app: mempalace
+  ports:
+    - name: mcp
+      protocol: TCP
+      port: 8000
+      targetPort: 8000
+  clusterIP: None          # headless service for the StatefulSet
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: mempalace
+  namespace: mempalace
+  labels:
+    app: mempalace
+spec:
+  serviceName: mempalace
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mempalace
+  template:
+    metadata:
+      labels:
+        app: mempalace       # matched by the Gap 2 NetworkPolicy
+    spec:
+      containers:
+        - name: mempalace
+          image: quay.io/aicatalyst/mempalace:operator-v2
+          args:
+            - "--transport"
+            - "streamable-http"
+            - "--host"
+            - "0.0.0.0"
+            - "--port"
+            - "8000"
+            - "--palace"
+            - "/opt/app-root/data"
+          env:
+            - name: MEMPALACE_HOME
+              value: /opt/app-root/data
+            - name: PYTHONUNBUFFERED
+              value: "1"
+          ports:
+            - containerPort: 8000
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /ready
+              port: 8000
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: "2Gi"
+              cpu: "500m"
+            limits:
+              memory: "4Gi"
+              cpu: "2000m"
+          volumeMounts:
+            - name: data
+              mountPath: /opt/app-root/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        # Omit storageClassName to use the cluster default, or pin one explicitly.
+        resources:
+          requests:
+            storage: 10Gi
