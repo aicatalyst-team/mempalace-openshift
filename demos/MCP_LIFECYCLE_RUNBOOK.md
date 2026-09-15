@@ -80,6 +80,42 @@ oc get httproute -n mcp-gateway-system
 
 You now have a federated gateway with MemPalace's tools. But it's open to the network, unencrypted, and not yet hardened for production. Phase 2 closes the three critical gaps.
 
+### 1.3 Register with the OpenShift AI UI Catalog
+
+The OpenShift AI dashboard ("AI hub") discovers MCP servers through a ConfigMap named `gen-ai-aa-mcp-servers` in the `redhat-ods-applications` namespace. To make MemPalace discoverable in the UI, create this ConfigMap:
+
+```bash
+oc apply -f - <<'EOF'
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gen-ai-aa-mcp-servers
+  namespace: redhat-ods-applications
+data:
+  servers.json: |
+    [
+      {
+        "name": "MemPalace",
+        "id": "mempalace",
+        "description": "AI memory system — search, store, and organize knowledge in a hierarchical palace structure with semantic search",
+        "category": ["memory", "knowledge-management"],
+        "tags": ["ai-memory", "chromadb", "semantic-search"],
+        "serverAddress": "http://mempalace.mempalace.svc.cluster.local:8000/mcp",
+        "registeredTools": ["mempalace_status", "mempalace_search", "mempalace_add_drawer", "mempalace_list_drawers", "mempalace_export_drawer", "mempalace_import_drawer", "mempalace_create_relationship", "mempalace_search_relationships", "mempalace_list_rooms", "mempalace_list_relationship_types"],
+        "documentationUrl": "https://github.com/aicatalyst-team/mempalace-openshift",
+        "icon": "🏛️"
+      }
+    ]
+EOF
+```
+
+**Verify it appears in the dashboard:**
+1. Navigate to **OpenShift AI home** → **AI hub** (top menu)
+2. Click **Browse, manage, and deploy models and MCP servers** → **MCP servers**
+3. You should see **MemPalace** listed with its category, description, and icon
+
+The UI now discovers MemPalace through the MCPServerRegistration CRD (federated tools) and the ConfigMap (discoverable metadata). This is the **platform-native integration point** for custom MCP servers.
+
 ## Phase 2: Harden — Close the Three Gaps
 
 ### Gap 2: Network Bypass (L3/L4 backstop)

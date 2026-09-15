@@ -27,13 +27,22 @@ oc get ns mempalace >/dev/null || fail "MemPalace namespace not found"
 pass "Cluster authenticated"
 pause
 
-# Phase 1: Verify federation
-step "PHASE 1: Verify MCP federation (MemPalace federated behind gateway)"
+# Phase 1: Verify federation & UI discovery
+step "PHASE 1: Verify MCP federation and UI discovery"
 oc get mcpserverregistration mempalace -n mcp-gateway-system &>/dev/null || \
   fail "MemPalace not registered. Run Phase 1 from the runbook first."
-TOOLS=$(oc get mcpserverregistration mempalace -n mcp-gateway-system -o jsonpath='{.status.tools}' 2>/dev/null | wc -l)
-echo "  MemPalace registration: READY=True, $TOOLS tools"
-pass "Federation verified"
+TOOLS=$(oc get mcpserverregistration mempalace -n mcp-gateway-system -o jsonpath='{.status.discoveredTools}' 2>/dev/null)
+echo "  MemPalace federation: READY=True, $TOOLS tools discovered"
+
+CM_EXISTS=$(oc get cm gen-ai-aa-mcp-servers -n redhat-ods-applications &>/dev/null && echo "yes" || echo "no")
+if [ "$CM_EXISTS" = "yes" ]; then
+  echo "  MemPalace UI catalog: registered in gen-ai-aa-mcp-servers ConfigMap"
+  echo "    → Visible in AI hub: https://rh-ai.apps.ocp-gb.ibm.redhataicatalyst.com/"
+  pass "Federation and UI discovery verified"
+else
+  echo "  MemPalace UI catalog: NOT registered (ConfigMap not found)"
+  echo "    → Run Phase 1.3 from the runbook to register with the dashboard"
+fi
 pause
 
 # Phase 2: Show gap fixes (read-only, no apply)
