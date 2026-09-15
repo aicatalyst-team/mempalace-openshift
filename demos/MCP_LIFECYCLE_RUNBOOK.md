@@ -82,8 +82,13 @@ You now have a federated gateway with MemPalace's tools. But it's open to the ne
 
 ### 1.3 Register with the OpenShift AI UI Catalog
 
-The OpenShift AI dashboard ("AI hub") discovers MCP servers through a ConfigMap named `gen-ai-aa-mcp-servers` in the `redhat-ods-applications` namespace. To make MemPalace discoverable in the UI, create this ConfigMap:
+The OpenShift AI dashboard ("AI hub") discovers MCP servers through a ConfigMap named `gen-ai-aa-mcp-servers` in the `redhat-ods-applications` namespace. Apply the prepared manifest:
 
+```bash
+oc apply -f aramco-mcp-lifecycle/hardening/ui-catalog-registration.yaml
+```
+
+Or create it inline:
 ```bash
 oc apply -f - <<'EOF'
 apiVersion: v1

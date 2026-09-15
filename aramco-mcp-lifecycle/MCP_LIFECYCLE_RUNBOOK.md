@@ -36,7 +36,10 @@ req = urllib.request.Request("http://localhost:8000/mcp",
     headers={"Content-Type":"application/json"})
 r = json.loads(urllib.request.urlopen(req).read())
 s = json.loads(r["result"]["content"][0]["text"])
-print(f"Drawers: {s[\"total_drawers\"]}, Wings: {s[\"wings\"]}, Rooms: {s[\"rooms\"]}")
+drawers = s["total_drawers"]
+wings = s["wings"]
+rooms = s["rooms"]
+print(f"Drawers: {drawers}, Wings: {wings}, Rooms: {rooms}")
 '
 ```
 
@@ -441,8 +444,10 @@ echo "   - RBAC boundary"
 
 > - Deployed on the current supported spec (2025-03-26)
 > - Architecture already matches the 2026-07-28 direction
-> - 12-month deprecation window — clear, planned upgrade path
+> - The gateway absorbs the session breaking change (SEP-2567) — clients keep working while backends move to stateless
 > - The same pattern validated by major cloud providers, built on Red Hat's stack
+
+> **Be precise on the timeline:** Session removal (SEP-2567) is a *clean break* — it is **not** covered by a deprecation window. The 12-month window applies to other deprecated features (Roots, Sampling, Logging, and the HTTP+SSE transport). Don't tell a customer architect that sessions have a grace period — if they open the SEP, they'll catch it. The real value is that the gateway isolates their clients from the change: it terminates the session at the edge, so the migration to stateless happens behind the gateway, not in their agents.
 
 ---
 

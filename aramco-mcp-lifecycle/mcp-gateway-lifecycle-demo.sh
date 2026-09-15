@@ -24,22 +24,22 @@
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../demos/demo-lib.sh"
 
-# Parse MCP JSON response — strips SSE framing if present, handles control chars
+# Parse MCP JSON response. Handles two response shapes from the gateway:
+#   1. SSE-framed  — one or more `data: {...}` lines
+#   2. plain JSON  — a single object that may span multiple lines because
+#                    string values contain literal newlines
+# strict=False tolerates those literal control characters inside strings.
+# Feed responses with `printf '%s'` (NOT echo) so backslash escapes survive.
 parse_mcp() {
     python3 -c "
-import sys, json, re
+import sys, json
 raw = sys.stdin.read().strip()
-# Strip SSE framing (event: message\ndata: ...)
-for line in raw.splitlines():
-    if line.startswith('data: '):
-        raw = line[6:]
-        break
-    elif line.startswith('{'):
-        raw = line
-        break
-obj = json.loads(raw)
+# If SSE-framed, concatenate the data: payloads; otherwise use the whole body.
+if any(l.startswith('data: ') for l in raw.splitlines()):
+    raw = ''.join(l[6:] for l in raw.splitlines() if l.startswith('data: '))
+obj = json.loads(raw, strict=False)
 $1
-" 2>/dev/null
+"
 }
 
 # Demo configuration
@@ -84,11 +84,10 @@ simulate_typing "oc get csv -n mcp-gateway-system mcp-gateway.v0.7.1 -o custom-c
 demo_wait "$COMMAND_PAUSE"
 oc get csv -n mcp-gateway-system mcp-gateway.v0.7.1 -o custom-columns=NAME:.spec.displayName,VERSION:.spec.version,STATUS:.status.phase --no-headers 2>&1
 echo ""
-simulate_typing "oc get deploy -n mcp-lifecycle-operator-system mcp-lifecycle-operator-controller-manager -o jsonpath='{.metadata.labels.app\\.kubernetes\\.io/name}  v{.metadata.labels.app\\.kubernetes\\.io/version}  Ready={.status.readyReplicas}' && echo ''"
+simulate_typing "oc get deploy -n mcp-lifecycle-operator-system mcp-lifecycle-operator-controller-manager -o custom-columns=NAME:.metadata.name,READY:.status.readyReplicas,AVAILABLE:.status.availableReplicas --no-headers"
 demo_wait "$COMMAND_PAUSE"
 oc get deploy -n mcp-lifecycle-operator-system mcp-lifecycle-operator-controller-manager \
-    -o jsonpath='MCP Lifecycle Operator  v0.2.0  Ready' 2>&1
-echo ""
+    -o custom-columns=NAME:.metadata.name,READY:.status.readyReplicas,AVAILABLE:.status.availableReplicas --no-headers 2>&1
 echo ""
 demo_wait "$RESULT_PAUSE"
 
@@ -197,7 +196,7 @@ echo ""
 simulate_typing "oc exec -n ${NS_MEMPALACE} deploy/mempalace -- python3 -c '...tools/list...'"
 demo_wait "$COMMAND_PAUSE"
 
-oc exec -n ${NS_MEMPALACE} deploy/mempalace -- python3 -c '
+TOOLS_OUTPUT=$(oc exec -n ${NS_MEMPALACE} deploy/mempalace -- python3 -c '
 import urllib.request, json
 req = urllib.request.Request("http://localhost:8000/mcp",
     data=json.dumps({"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}).encode(),
@@ -207,13 +206,19 @@ tools = r["result"]["tools"]
 print(f"  Tools discovered: {len(tools)}")
 print()
 for t in tools[:8]:
-    print(f"    - {t[\"name\"]}")
+    tname = t["name"]
+    print(f"    - {tname}")
 if len(tools) > 8:
-    print(f"    ... and {len(tools)-8} more")
-' 2>&1
+    remaining = len(tools) - 8
+    print(f"    ... and {remaining} more")
+' 2>&1)
+
+echo "$TOOLS_OUTPUT"
+
+TOOL_COUNT=$(echo "$TOOLS_OUTPUT" | grep -oE 'Tools discovered: [0-9]+' | grep -oE '[0-9]+')
 
 echo ""
-show_result "success" "MCP server deployed and responding — protocol handshake confirmed, ${NS_MEMPALACE} tools discovered"
+show_result "success" "MCP server deployed and responding — protocol handshake confirmed, ${TOOL_COUNT:-all} tools discovered"
 demo_wait "$RESULT_PAUSE"
 
 ###############################################################################
@@ -284,13 +289,14 @@ curl -s "${GATEWAY_LB}/mcp" \
     -H "Mcp-Session-Id: ${SESSION}" \
     -d '{"jsonrpc":"2.0","method":"notifications/initialized"}' >/dev/null 2>&1
 
-echo "$INIT_RESP" | parse_mcp "
+printf '%s' "$INIT_RESP" | parse_mcp "
 info = obj['result']['serverInfo']
-print(f'  Gateway: {info[\"name\"]} v{info[\"version\"]}')
+name = info['name']; ver = info['version']
+print(f'  Gateway: {name} v{ver}')
 proto = obj['result']['protocolVersion']
 print(f'  Protocol: {proto}')
 print(f'  Session: JWT issued')
-" || echo "$INIT_RESP"
+" || printf '%s\n' "$INIT_RESP"
 
 echo ""
 show_result "success" "Session established with JWT token"
@@ -306,8 +312,8 @@ DISCOVER=$(curl -s "${GATEWAY_LB}/mcp" \
     -H "Mcp-Session-Id: ${SESSION}" \
     -d '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"discover_tools","arguments":{}}}')
 
-echo "$DISCOVER" | parse_mcp "
-data = json.loads(obj['result']['content'][0]['text'])
+printf '%s' "$DISCOVER" | parse_mcp "
+data = json.loads(obj['result']['content'][0]['text'], strict=False)
 for srv in data['servers']:
     name = srv['name']
     cats = srv['categories']
@@ -319,7 +325,8 @@ for srv in data['servers']:
     for t in tools[:5]:
         print(f'    • {t}')
     if len(tools) > 5:
-        print(f'    ... and {len(tools)-5} more')
+        remaining = len(tools) - 5
+        print(f'    ... and {remaining} more')
 "
 
 echo ""
@@ -336,12 +343,14 @@ STATUS=$(curl -s "${GATEWAY_LB}/mcp" \
     -H "Mcp-Session-Id: ${SESSION}" \
     -d '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"mempalace_status","arguments":{}}}')
 
-echo "$STATUS" | parse_mcp "
-s = json.loads(obj['result']['content'][0]['text'])
+printf '%s' "$STATUS" | parse_mcp "
+s = json.loads(obj['result']['content'][0]['text'], strict=False)
+path = s['palace_path']
+drawers = s['total_drawers']
 wings = s['wings'] if s['wings'] else '(empty)'
 rooms = s['rooms'] if s['rooms'] else '(empty)'
-print(f'  Palace path: {s[\"palace_path\"]}')
-print(f'  Total drawers: {s[\"total_drawers\"]}')
+print(f'  Palace path: {path}')
+print(f'  Total drawers: {drawers}')
 print(f'  Wings: {wings}')
 print(f'  Rooms: {rooms}')
 "
@@ -361,12 +370,16 @@ ADD_RESULT=$(curl -s "${GATEWAY_LB}/mcp" \
     -H "Mcp-Session-Id: ${SESSION}" \
     -d "{\"jsonrpc\":\"2.0\",\"id\":4,\"method\":\"tools/call\",\"params\":{\"name\":\"mempalace_add_drawer\",\"arguments\":{\"title\":\"OpenShift AI MCP Deployment Pattern — live demo ${DEMO_TS}\",\"content\":\"Deploy MCP servers to OpenShift AI using the MCP Lifecycle Operator. The operator creates Deployments from MCPServer CRDs, performs protocol handshake, and validates tool discovery. Federate multiple servers through the MCP Gateway for unified access with session-based routing. Demonstrated live at ${DEMO_TS}.\",\"wing\":\"wing_code\",\"room\":\"openshift-ai\",\"importance\":5,\"tags\":[\"openshift\",\"mcp\",\"deployment\",\"operator\",\"demo\"]}}}")
 
-echo "$ADD_RESULT" | parse_mcp "
-d = json.loads(obj['result']['content'][0]['text'])
-print(f'  Drawer ID: {d[\"drawer_id\"]}')
-print(f'  Wing: {d[\"wing\"]}')
-print(f'  Room: {d[\"room\"]}')
-print(f'  Success: {d[\"success\"]}')
+printf '%s' "$ADD_RESULT" | parse_mcp "
+d = json.loads(obj['result']['content'][0]['text'], strict=False)
+drawer_id = d['drawer_id']
+wing = d.get('wing', 'n/a')
+room = d.get('room', 'n/a')
+success = d['success']
+print(f'  Drawer ID: {drawer_id}')
+print(f'  Wing: {wing}')
+print(f'  Room: {room}')
+print(f'  Success: {success}')
 "
 
 echo ""
@@ -383,14 +396,14 @@ SEARCH=$(curl -s "${GATEWAY_LB}/mcp" \
     -H "Mcp-Session-Id: ${SESSION}" \
     -d '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"mempalace_search","arguments":{"query":"How do I deploy MCP servers to production?","top_k":3}}}')
 
-echo "$SEARCH" | parse_mcp "
-s = json.loads(obj['result']['content'][0]['text'])
+printf '%s' "$SEARCH" | parse_mcp "
+s = json.loads(obj['result']['content'][0]['text'], strict=False)
 q = s['query']
 results = s['results']
-print(f'  Query: \"{q}\"')
+print(f'  Query: {q}')
 print(f'  Results: {len(results)}')
 print()
-for res in results:
+for res in results[:3]:
     sim = res['similarity']
     wing = res['wing']
     room = res['room']
@@ -545,8 +558,12 @@ echo -e "${CYAN}# Our position:${NC}"
 echo ""
 echo -e "  ${GREEN}✓${NC} Deployed on the current supported spec (2025-03-26)"
 echo -e "  ${GREEN}✓${NC} Architecture already matches the 2026-07-28 direction"
-echo -e "  ${GREEN}✓${NC} 12-month deprecation window — clear, planned upgrade path"
+echo -e "  ${GREEN}✓${NC} Gateway absorbs the session change (SEP-2567) — clients unaffected"
 echo -e "  ${GREEN}✓${NC} Gateway pattern validated by major cloud providers"
+echo ""
+echo -e "  ${DIM}Note: session removal (SEP-2567) is a clean break — no deprecation window.${NC}"
+echo -e "  ${DIM}The 12-month window covers Roots, Sampling, Logging and HTTP+SSE. The${NC}"
+echo -e "  ${DIM}gateway is what shields clients from the session change during migration.${NC}"
 echo ""
 demo_wait "$RESULT_PAUSE"
 

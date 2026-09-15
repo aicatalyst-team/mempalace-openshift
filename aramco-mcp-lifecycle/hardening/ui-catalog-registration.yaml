@@ -1,0 +1,42 @@
+# OpenShift AI UI Catalog Registration for MemPalace
+#
+# This ConfigMap registers MemPalace in the OpenShift AI dashboard ("AI hub")
+# by populating the gen-ai-aa-mcp-servers ConfigMap that the gen-ai-ui component reads.
+#
+# The UI discovery is complementary to the Kuadrant MCPServerRegistration CRD,
+# which governs federation (tool routing, OIDC, per-tool auth).
+#
+# Apply this after Phase 1.2 (MCPServerRegistration):
+#   oc apply -f ui-catalog-registration.yaml
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: gen-ai-aa-mcp-servers
+  namespace: redhat-ods-applications
+data:
+  servers.json: |
+    [
+      {
+        "name": "MemPalace",
+        "id": "mempalace",
+        "description": "AI memory system — search, store, and organize knowledge in a hierarchical palace structure with semantic search. Backed by ChromaDB for efficient semantic recall.",
+        "category": ["memory", "knowledge-management"],
+        "tags": ["ai-memory", "chromadb", "semantic-search", "rag"],
+        "serverAddress": "http://mempalace.mempalace.svc.cluster.local:8000/mcp",
+        "registeredTools": [
+          "mempalace_status",
+          "mempalace_search",
+          "mempalace_add_drawer",
+          "mempalace_list_drawers",
+          "mempalace_export_drawer",
+          "mempalace_import_drawer",
+          "mempalace_create_relationship",
+          "mempalace_search_relationships",
+          "mempalace_list_rooms",
+          "mempalace_list_relationship_types"
+        ],
+        "documentationUrl": "https://github.com/aicatalyst-team/mempalace-openshift/tree/main/aramco-mcp-lifecycle",
+        "icon": "🏛️"
+      }
+    ]

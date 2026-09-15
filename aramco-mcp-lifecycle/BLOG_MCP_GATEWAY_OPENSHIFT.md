@@ -14,7 +14,7 @@ You have an AI tool server that speaks MCP. You can run it locally, but deployin
 
 Manual `Deployment` + `Service` manifests work for one server. They do not scale to ten. The MCP Lifecycle Operator and MCP Gateway solve this by giving you a declarative, Kubernetes-native way to deploy MCP servers and federate their tools behind a single gateway endpoint.
 
-This article walks through deploying [MemPalace](https://github.com/anthropics/mempalace)---an AI memory system with 29 MCP tools---on OpenShift AI 3.4.2, using the MCP Lifecycle Operator to manage the server and the MCP Gateway to federate its tools.
+This article walks through deploying [MemPalace](https://github.com/MemPalace/mempalace)---an AI memory system with 29 MCP tools---on OpenShift AI 3.4.2, using the MCP Lifecycle Operator to manage the server and the MCP Gateway to federate its tools.
 
 ## Architecture overview
 
@@ -203,13 +203,13 @@ $ oc get mcpserver mempalace -n mempalace -o jsonpath='{.status}' | python3 -m j
     "serverInfo": {
         "capabilities": {"tools": true},
         "name": "mempalace",
-        "protocolVersion": "2025-11-25",
+        "protocolVersion": "2025-03-26",
         "version": "3.3.3"
     }
 }
 ```
 
-The operator verified: the server speaks MCP protocol version `2025-11-25`, exposes tool capabilities and is running version `3.3.3`. No manual health check wiring required.
+The operator verified: the server speaks MCP protocol version `2025-03-26`, exposes tool capabilities and is running version `3.3.3`. No manual health check wiring required.
 
 ## Step 3: Set up the MCP Gateway
 
@@ -486,7 +486,7 @@ With the MCP server deployed and federated, you can:
 
 The MCP Lifecycle Operator and MCP Gateway bring the same declarative, operator-managed approach to MCP servers that OpenShift AI brings to model serving. Instead of managing deployments and routing by hand, you declare what you want---the operators handle the rest.
 
-**Try it yourself:** The complete manifests are available in the [MemPalace repository](https://github.com/anthropics/mempalace/tree/main/openshift). Start with the `MCPServer` CR and add the gateway when you need multi-server federation.
+**Try it yourself:** The complete manifests are available in the [MemPalace repository](https://github.com/MemPalace/mempalace/tree/main/openshift). Start with the `MCPServer` CR and add the gateway when you need multi-server federation.
 
 ---
 
