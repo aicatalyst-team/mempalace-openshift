@@ -2,7 +2,7 @@
 
 **Date:** September 15, 2026  
 **Status:** Verified live on api.ocp-gb.ibm.redhataicatalyst.com (OpenShift AI 3.5)  
-**Key Finding:** The platform-native integration mechanism is **ConfigMap-based, not CRD-based**.
+**Key Finding:** OpenShift AI 3.5 has separate MCP UI paths. The native AI Hub MCP Catalog is gated by the dashboard `mcpCatalog` feature flag and reads model-catalog MCP sources. The Gen AI chat MCP selector reads a different ConfigMap with one JSON object per key.
 
 ---
 
@@ -10,9 +10,9 @@
 
 How are custom MCP servers made discoverable in the OpenShift AI dashboard ("AI hub")? The blog mentioned the feature exists, but the mechanics were undocumented.
 
-## The Answer: Dual-Path Registration
+## The Answer: Three Registration Paths
 
-Custom MCP servers on OpenShift AI require two separate registrations, each with a different purpose:
+Custom MCP servers on OpenShift AI may use three separate registrations, each with a different purpose:
 
 ### 1. Federation Registration (Gateway/Routing)
 **CRD:** `MCPServerRegistration` (Kuadrant)  
@@ -39,10 +39,17 @@ spec:
 
 **Who consumes this:** The MCP Gateway operator and the running gateway pods. They use it to federate tools.
 
-### 2. UI Discovery Registration (Dashboard/Catalog)
+### 2. Native AI Hub MCP Catalog
+**Feature flag:** `spec.dashboardConfig.mcpCatalog: true` on `OdhDashboardConfig`
+**Namespace:** `redhat-ods-applications` for the dashboard CR
+**Purpose:** Enables the separate **MCP servers** tab beside Models under AI Hub.
+
+The catalog is served by the model-catalog backend. User-owned entries belong in the `mcp-catalog-sources` ConfigMap in `rhoai-model-registries`, using an `mcp_catalogs` source and a catalog YAML file. See `aramco-mcp-lifecycle/hardening/native-mcp-catalog-registration.yaml`.
+
+### 3. Gen AI Chat MCP Selector
 **Mechanism:** `ConfigMap` named `gen-ai-aa-mcp-servers`  
 **Namespace:** `redhat-ods-applications`  
-**Purpose:** Tells the OpenShift AI dashboard which MCP servers to list in the "AI hub" and what metadata to display.
+**Purpose:** Supplies MCP connections that users can select in the Gen AI chat experience.
 
 ```yaml
 apiVersion: v1
@@ -51,22 +58,15 @@ metadata:
   name: gen-ai-aa-mcp-servers
   namespace: redhat-ods-applications
 data:
-  servers.json: |
-    [
-      {
-        "name": "MemPalace",
-        "id": "mempalace",
-        "description": "...",
-        "category": ["memory", "knowledge-management"],
-        "tags": ["ai-memory", "chromadb", "semantic-search"],
-        "serverAddress": "http://mempalace.mempalace.svc.cluster.local:8000/mcp",
-        "documentationUrl": "https://...",
-        "icon": "🏛️"
-      }
-    ]
+  mempalace: |
+    {
+      "url": "https://mcp-secure.apps.ocp-gb.ibm.redhataicatalyst.com/mcp",
+      "transport": "streamable-http",
+      "description": "MemPalace semantic memory MCP server for the Saudi Aramco OpenShift AI demo"
+    }
 ```
 
-**Who consumes this:** The `gen-ai-ui` deployment. It reads this ConfigMap at startup and watches for updates. It displays the servers in the dashboard's "MCP servers" section.
+**Who consumes this:** The `gen-ai-ui` deployment and its BFF. It reads this ConfigMap for the chat MCP selector. The current BFF does not accept the older `servers.json` array format.
 
 ---
 
@@ -92,13 +92,13 @@ data:
    namespace=redhat-ods-applications
    ```
    
-   The UI was *trying* to read a ConfigMap that didn't exist yet.
+   The UI was *trying* to read a ConfigMap that didn't exist yet. On the current cluster, the same component also logged a parse error when the ConfigMap contained a `servers.json` array; the current schema is one JSON object per ConfigMap key.
 
-5. **Verified the pattern:**
-   - Created the ConfigMap with MemPalace metadata
-   - Restarted gen-ai-ui
-   - Confirmed logs no longer show the error
-   - MemPalace now discoverable in the dashboard
+5. **Verified the current platform paths:**
+   - Enabled `mcpCatalog` on `OdhDashboardConfig`
+   - Confirmed the native API returns the built-in MCP catalogs
+   - Added MemPalace to the user MCP catalog source
+   - Confirmed the Gen AI BFF returns MemPalace as a healthy chat MCP server
 
 ---
 
@@ -109,23 +109,24 @@ data:
    - The dashboard manages discovery (what users see, what to promote)
 
 2. **Operational flexibility:**
-   - An operator can disable a server in the dashboard (remove it from ConfigMap) without removing it from the gateway (the MCPServerRegistration stays)
-   - An operator can add descriptive metadata (icon, category, tags) without modifying the gateway's routing rules
+   - An operator can disable a server in the native catalog or chat selector without removing it from the gateway (the MCPServerRegistration stays)
+   - An operator can add catalog metadata without modifying the gateway's routing rules
 
 3. **No custom CRDs for metadata:**
    - The ConfigMap is standard Kubernetes, familiar to all operators
    - No webhook validation, no controller logic — just JSON data
 
 4. **Extensibility:**
-   - Multiple servers are just additional entries in the JSON array
-   - Future servers follow the same pattern: one MCPServerRegistration + one servers.json entry
+   - Multiple servers are additional catalog entries or ConfigMap keys
+   - Future servers can use the same gateway registration plus whichever UI path they need
 
 ---
 
 ## Manifests and Runbook Updates
 
-### New Artifact
-- **`aramco-mcp-lifecycle/hardening/ui-catalog-registration.yaml`** — Ready-to-apply ConfigMap for MemPalace
+### New Artifacts
+- **`aramco-mcp-lifecycle/hardening/ui-catalog-registration.yaml`** — Gen AI chat MCP selector ConfigMap
+- **`aramco-mcp-lifecycle/hardening/native-mcp-catalog-registration.yaml`** — Native AI Hub MCP Catalog source and MemPalace entry
 
 ### Updated Documentation
 - **`demos/MCP_LIFECYCLE_RUNBOOK.md`** — Phase 1.3 now explains the UI discovery mechanism and references the manifest
@@ -141,55 +142,56 @@ data:
 
 ### Step-by-Step
 
-1. **Applied the ConfigMap:**
+1. **Enabled the native MCP tab:**
+   ```bash
+   oc patch odhdashboardconfig odh-dashboard-config -n redhat-ods-applications \
+     --type=merge -p '{"spec":{"dashboardConfig":{"mcpCatalog":true}}}'
+   ```
+
+2. **Applied the two MCP registrations:**
    ```bash
    oc apply -f aramco-mcp-lifecycle/hardening/ui-catalog-registration.yaml
+   oc apply -f aramco-mcp-lifecycle/hardening/native-mcp-catalog-registration.yaml
    ```
 
-2. **Restarted the gen-ai-ui:**
+3. **Checked the native catalog API:**
    ```bash
-   oc rollout restart deploy/gen-ai-ui -n redhat-ods-applications
-   oc rollout status deploy/gen-ai-ui -n redhat-ods-applications --timeout=120s
+   curl -H "Authorization: Bearer $(oc whoami -t)" \
+     'https://rh-ai.apps.ocp-gb.ibm.redhataicatalyst.com/model-registry/api/v1/mcp_catalog/mcp_servers?namespace=rhoai-model-registries'
+   # ✓ Includes the MemPalace entry under aramco_mcp_servers
    ```
 
-3. **Checked logs for errors:**
-   ```bash
-   oc logs -n redhat-ods-applications deploy/gen-ai-ui --tail=50 | grep "gen-ai-aa-mcp-servers"
-   # ✓ No "failed to get ConfigMap" errors
-   ```
-
-4. **Verified UI:**
+4. **Verified the UI:**
    - Navigated to: https://rh-ai.apps.ocp-gb.ibm.redhataicatalyst.com/
-   - AI hub → MCP servers
-   - ✓ MemPalace now listed with icon, category, description, and tags
+   - Hard-refreshed the dashboard
+   - AI Hub → Models / MCP servers
+   - ✓ The MCP servers tab is visible and MemPalace is listed
 
 ---
 
-## ConfigMap Schema (Inferred from Live Testing)
+## Gen AI Chat ConfigMap Schema (Verified on OpenShift AI 3.5)
 
-The `servers.json` in the ConfigMap should be a JSON array with objects having:
+The ConfigMap should contain one JSON object per server key:
 
 | Field | Type | Required | Notes |
 |-------|------|----------|-------|
-| `name` | string | Yes | Display name in the UI |
-| `id` | string | Yes | Unique identifier, kebab-case |
-| `description` | string | Yes | Short description for the catalog |
-| `category` | array | Yes | Categories for filtering (e.g., `["memory", "knowledge-management"]`) |
-| `tags` | array | No | Tags for search/discovery |
-| `serverAddress` | string | Yes | Full MCP endpoint URL (in-cluster Service is fine) |
-| `registeredTools` | array | No | List of tool names this server exposes |
-| `documentationUrl` | string | No | Link to docs/repo |
-| `icon` | string | No | Emoji or icon identifier |
+| ConfigMap key | string | Yes | Server label, for example `mempalace` |
+| `url` | string | Yes | Full MCP endpoint URL |
+| `transport` | string | No | `streamable-http` or `sse`; defaults to `streamable-http` |
+| `description` | string | No | Short description shown in the selector |
+| `logo` | string | No | Optional logo URL |
+
+The native catalog uses the separate YAML schema in `native-mcp-catalog-registration.yaml`, including `mcp_servers`, `deploymentMode`, `endpoints`, and `tools`.
 
 ---
 
 ## Next Steps
 
-1. **Test end-to-end:** Verify that developers can click on MemPalace in the AI hub and deploy/interact with it.
+1. **Test end-to-end:** Verify that developers can open the native MCP Catalog and select MemPalace in the Gen AI chat MCP selector.
 
 2. **Document in Red Hat docs:** This pattern should be in the official OpenShift AI documentation for operators registering custom MCP servers.
 
-3. **Extend for multiple servers:** The ConfigMap JSON array can hold multiple servers — future custom MCP servers will use the same pattern.
+3. **Extend for multiple servers:** Add a native catalog entry and a separate chat ConfigMap key for each future custom MCP server.
 
 4. **Monitor for GA improvements:** When Kuadrant AuthPolicy GA's and the Tech Preview OIDC defect is fixed, the federation path may gain UI-integrated policy management.
 

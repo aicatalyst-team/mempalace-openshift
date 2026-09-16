@@ -1,0 +1,103 @@
+# Native OpenShift AI 3.5 MCP Catalog registration for MemPalace.
+# This is separate from the Gen AI chat MCP selector ConfigMap.
+#
+# Apply after Phase 1.2 (MCPServerRegistration):
+#   oc apply -f native-mcp-catalog-registration.yaml
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: mcp-catalog-sources
+  namespace: rhoai-model-registries
+data:
+  sources.yaml: |
+    mcp_catalogs:
+      - name: Saudi Aramco MCP Servers
+        id: aramco_mcp_servers
+        type: yaml
+        enabled: true
+        properties:
+          yamlCatalogPath: aramco-mcp-servers.yaml
+        labels:
+          - Saudi Aramco
+  aramco-mcp-servers.yaml: |
+    source: Saudi Aramco MCP
+    mcp_servers:
+      - name: mempalace
+        provider: Saudi Aramco
+        version: 3.3.3
+        description: MemPalace semantic memory MCP server deployed on OpenShift AI for the Saudi Aramco end-to-end MCP and MaaS demonstration.
+        documentationUrl: https://github.com/MemPalace/mempalace
+        transports:
+          - http
+        deploymentMode: remote
+        endpoints:
+          http: https://mcp-secure.apps.ocp-gb.ibm.redhataicatalyst.com/mcp
+        toolCount: 29
+        tags:
+          - Saudi Aramco
+          - memory
+          - OpenShift AI
+          - MaaS
+        securityIndicators:
+          secureEndpoint: true
+          readOnlyTools: false
+        tools:
+          - name: mempalace_status
+            accessType: read_only
+          - name: mempalace_list_wings
+            accessType: read_only
+          - name: mempalace_list_rooms
+            accessType: read_only
+          - name: mempalace_get_taxonomy
+            accessType: read_only
+          - name: mempalace_get_aaak_spec
+            accessType: read_only
+          - name: mempalace_kg_query
+            accessType: read_only
+          - name: mempalace_kg_add
+            accessType: read_write
+          - name: mempalace_kg_invalidate
+            accessType: read_write
+          - name: mempalace_kg_timeline
+            accessType: read_only
+          - name: mempalace_kg_stats
+            accessType: read_only
+          - name: mempalace_traverse
+            accessType: read_only
+          - name: mempalace_find_tunnels
+            accessType: read_only
+          - name: mempalace_graph_stats
+            accessType: read_only
+          - name: mempalace_create_tunnel
+            accessType: read_write
+          - name: mempalace_list_tunnels
+            accessType: read_only
+          - name: mempalace_delete_tunnel
+            accessType: read_write
+          - name: mempalace_follow_tunnels
+            accessType: read_only
+          - name: mempalace_search
+            accessType: read_only
+          - name: mempalace_check_duplicate
+            accessType: read_only
+          - name: mempalace_add_drawer
+            accessType: read_write
+          - name: mempalace_delete_drawer
+            accessType: read_write
+          - name: mempalace_get_drawer
+            accessType: read_only
+          - name: mempalace_list_drawers
+            accessType: read_only
+          - name: mempalace_update_drawer
+            accessType: read_write
+          - name: mempalace_diary_write
+            accessType: read_write
+          - name: mempalace_diary_read
+            accessType: read_only
+          - name: mempalace_hook_settings
+            accessType: read_write
+          - name: mempalace_memories_filed_away
+            accessType: read_only
+          - name: mempalace_reconnect
+            accessType: execute
