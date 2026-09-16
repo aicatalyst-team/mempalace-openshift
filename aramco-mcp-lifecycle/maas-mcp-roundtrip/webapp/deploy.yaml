@@ -15,6 +15,11 @@ spec:
         image: image-registry.openshift-image-registry.svc:5000/maas-mcp-demo/maas-mcp-demo:latest
         ports: [ { containerPort: 8080 } ]
         envFrom: [ { secretRef: { name: maas-mcp-creds } } ]
+        env:
+        - name: MLFLOW_TRACKING_URI
+          value: https://mlflow-praxis-verified.apps.ocp-gb.ibm.redhataicatalyst.com
+        - name: MLFLOW_EXPERIMENT_NAME
+          value: aramco-mcp-maas-roundtrip
         readinessProbe: { httpGet: { path: /healthz, port: 8080 }, initialDelaySeconds: 5, periodSeconds: 5 }
 ---
 apiVersion: v1

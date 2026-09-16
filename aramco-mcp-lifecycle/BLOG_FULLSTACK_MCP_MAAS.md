@@ -1,8 +1,8 @@
 # Federate MCP servers and close the loop with model serving on OpenShift AI
 
-*From one MCP server to a secured, model-driven tool platform — the full Red Hat OpenShift AI stack, end to end.*
+*From two MCP servers to a secured, model-driven tool platform — the full Red Hat OpenShift AI stack, end to end.*
 
-In two earlier articles we deployed the MemPalace MCP server on Red Hat OpenShift AI, then federated it behind the MCP Gateway so agents could discover and route to its tools through a single endpoint. That got us a working tool plane. But a working tool plane is not a production platform.
+In two earlier articles we deployed the MemPalace MCP server on Red Hat OpenShift AI, then federated it behind the MCP Gateway so agents could discover and route to its tools through a single endpoint. This revision adds the catalog-supported Red Hat OpenShift MCP server as a second backend and MLflow telemetry for the complete round trip.
 
 Three questions decide whether an enterprise can actually run this: How is access secured? Can the gateway be bypassed? Does the data survive a restart? And one question decides whether it is *useful*: can a model actually reason over these tools and complete a task end to end?
 
@@ -19,39 +19,30 @@ This article answers all four. We harden the deployment across three stack-level
 
 - How to identify and close the three production gaps that are properties of the MCP *stack*, not any single server: authentication, network bypass, and durable storage
 - How to enforce OIDC on the MCP gateway with Red Hat build of Keycloak (RHBK) — including a live, honest path when a Tech Preview component is not ready
-- How to connect a MaaS-served model (LiteLLM/vLLM) to the MCP gateway so the model reasons over federated tools and returns a grounded answer
+- How to connect a MaaS-served model (LiteLLM/vLLM) to the MCP gateway so the model reasons over two federated tool sets and returns a grounded answer
+- How to record OIDC, MCP, MaaS, and tool-call timings in MLflow without making telemetry a dependency of the demo path
 - How to reason about what belongs to the platform versus the workload, so the hardening you do generalizes to every future MCP server
 
 ## Platform-native discovery: registering MCP servers in the UI
 
-Before diving into the three gaps, a quick note on visibility. The MCP Lifecycle Operator and the Kuadrant MCP Gateway live on the cluster, but are they discoverable from the platform's UI? Yes — OpenShift AI provides a **dual-path registration system** for custom MCP servers:
+Before diving into the three gaps, a quick note on visibility. OpenShift AI has separate UI surfaces for native catalog entries and custom gateway connections:
 
 1. **Kuadrant MCPServerRegistration CRD** — registers the server for *federation* (tool discovery, routing, authorization). This is what the gateway consumes.
-2. **gen-ai-aa-mcp-servers ConfigMap** — registers the server for *UI visibility* (dashboard "AI hub", catalog browsing, human operators). This is what the platform's UI consumes.
+2. **gen-ai-aa-mcp-servers ConfigMap** — registers the federated Aramco gateway in the Gen AI chat MCP selector.
+3. **AI Hub → MCP servers** — the native model-catalog tab exposes catalog-supported servers, including Red Hat OpenShift MCP.
 
-To make a custom MCP server visible in the OpenShift AI dashboard, create the ConfigMap in the `redhat-ods-applications` namespace with a `servers.json` key containing metadata (name, description, category, tags, icon, documentation URL). The platform-native integration point is **ConfigMap-based**: no custom CRDs, no webhooks — just a JSON document that the gen-ai-ui component reads at startup and on ConfigMap updates.
+For this demo, the custom connection is the secured, federated Aramco gateway; the native catalog entry is the Red Hat OpenShift MCP server. The prepared manifests are:
 
-For MemPalace, this looks like:
 ```yaml
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: gen-ai-aa-mcp-servers
-  namespace: redhat-ods-applications
-data:
-  servers.json: |
-    [
-      {
-        "name": "MemPalace",
-        "id": "mempalace",
-        "category": ["memory", "knowledge-management"],
-        "tags": ["ai-memory", "chromadb", "semantic-search"],
-        ...
-      }
-    ]
+oc apply -f aramco-mcp-lifecycle/hardening/openshift-mcp-server.yaml
+oc apply -f aramco-mcp-lifecycle/hardening/ui-catalog-registration.yaml
+oc patch odhdashboardconfig odh-dashboard-config -n redhat-ods-applications \
+  --type=merge -p '{"spec":{"dashboardConfig":{"mcpCatalog":true}}}'
 ```
 
-Developers now see MemPalace in the AI hub; it is discoverable from the UI rather than a CLI-only construct.
+The result is a native MCP tab for the supported OpenShift server and a selectable
+secured gateway connection for the Aramco-specific MemPalace plus OpenShift tool
+plane.
 
 ## The gaps are the platform's, not the server's
 
@@ -121,11 +112,11 @@ A valid token reaches the real Kuadrant MCP gateway and its federated tools; a m
 Hardening earns trust; the round trip earns interest. The point of putting tools on the cluster is for a model to *use* them. So we connect a MaaS-hosted model — Granite 3.1 8B, served through LiteLLM on OpenShift AI — to the secured MCP gateway in a single agent loop:
 
 1. The agent obtains an OIDC token from RHBK and calls the MCP gateway through the secured edge.
-2. It discovers the federated tools (`tools/list`) and offers them to the model.
-3. The model chooses a tool — for example, `mempalace_search` — and the agent executes it through the gateway.
-4. The tool result is fed back, and the model returns a grounded, natural-language answer.
+2. It discovers the federated tools (`tools/list`) and performs read-only grounding calls against both backends.
+3. The live observations are offered to Granite, which may choose additional tools through the same gateway.
+4. MLflow records the OIDC, MCP, MaaS, and tool-call timings before the model returns a grounded answer.
 
-Every hop is real: RHBK OIDC, the Envoy edge, the Kuadrant MCP gateway federating 33 tools, MemPalace's ChromaDB semantic search, and Granite served through MaaS. Asked to explain how OIDC is enforced on the gateway, the model searched the memory palace and answered from the retrieved content — model reasoning grounded in live tool data, secured end to end.
+Every hop is real: RHBK OIDC, the Envoy edge, the Kuadrant MCP gateway federating 46 tools, the read-only OpenShift MCP server, MemPalace's ChromaDB semantic search, Granite served through MaaS, and the MLflow run trace. The hosted UI visualizes the two grounding probes and links directly to the completed run.
 
 Because this vLLM deployment was not started with a native tool parser, the agent drives tool selection with structured JSON prompting (a model-agnostic ReAct pattern) rather than the OpenAI tool API — no change to the model server required. When the server enables native tool calling, the same loop switches to the tools API unchanged.
 
@@ -134,14 +125,15 @@ A containerized web UI makes it click-to-run, visualizing each hop from OIDC to 
 ## The whole stack, as one system
 
 ```
-RHBK (OIDC) ─▶ Envoy jwt_authn edge ─▶ Kuadrant MCP Gateway ─▶ MemPalace (ChromaDB)
-                    (401 / 200)            (federates tools)          ▲
-      MaaS / LiteLLM (Granite) ── reasons, chooses a tool ───────────┘ ── grounded answer
+RHBK (OIDC) ─▶ Envoy jwt_authn edge ─▶ Kuadrant MCP Gateway ─┬▶ OpenShift MCP
+                    (401 / 200)            (46 tools)         └▶ MemPalace (ChromaDB)
+      MaaS / LiteLLM (Granite) ── reasons over live observations ──▶ grounded answer ──▶ MLflow
 ```
 
 - **Model serving** — MaaS/LiteLLM/vLLM (Granite)
 - **Tool federation** — Kuadrant MCP Gateway
-- **Tools and data** — MemPalace MCP server on the MCP Lifecycle Operator
+- **Tools and data** — read-only OpenShift MCP plus MemPalace on the MCP Lifecycle Operator
+- **Telemetry** — MLflow experiment `aramco-mcp-maas-roundtrip`, with per-hop duration and server tags
 - **Security** — RHBK OIDC, enforced at the edge today, native `AuthPolicy` at GA
 - **Defense in depth** — NetworkPolicy backstop; durable storage via PVC
 

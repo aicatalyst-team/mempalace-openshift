@@ -80,46 +80,47 @@ oc get httproute -n mcp-gateway-system
 
 You now have a federated gateway with MemPalace's tools. But it's open to the network, unencrypted, and not yet hardened for production. Phase 2 closes the three critical gaps.
 
-### 1.3 Register with the OpenShift AI UI Catalog
+### 1.3 Add the catalog-supported OpenShift MCP server
 
-The OpenShift AI dashboard ("AI hub") discovers MCP servers through a ConfigMap named `gen-ai-aa-mcp-servers` in the `redhat-ods-applications` namespace. Apply the prepared manifest:
+OpenShift AI's native MCP catalog already includes the Red Hat OpenShift MCP
+server. Deploy the read-only catalog image as a second backend and register it
+with the same gateway:
+
+```bash
+oc apply -f aramco-mcp-lifecycle/hardening/openshift-mcp-server.yaml
+oc get mcpserverregistration mempalace openshift-mcp -n mcp-gateway-system
+# Both registrations should report READY=True.
+# Expected live tool counts: MemPalace=29, OpenShift MCP=13.
+```
+
+The backend uses the `view` ClusterRole and sets
+`cluster_auth_mode = "kubeconfig"`. This matters because the gateway forwards
+the RHBK bearer token; the OpenShift MCP server must use its own pod
+service-account token for Kubernetes API calls.
+
+### 1.4 Register with the OpenShift AI UI Catalog
+
+OpenShift AI 3.5 has two separate UI registration paths. The Gen AI chat MCP selector reads `gen-ai-aa-mcp-servers`; the native **AI Hub → MCP servers** tab reads the model-catalog source in `rhoai-model-registries`. Apply the prepared manifests:
 
 ```bash
 oc apply -f aramco-mcp-lifecycle/hardening/ui-catalog-registration.yaml
-```
-
-Or create it inline:
-```bash
-oc apply -f - <<'EOF'
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: gen-ai-aa-mcp-servers
-  namespace: redhat-ods-applications
-data:
-  servers.json: |
-    [
-      {
-        "name": "MemPalace",
-        "id": "mempalace",
-        "description": "AI memory system — search, store, and organize knowledge in a hierarchical palace structure with semantic search",
-        "category": ["memory", "knowledge-management"],
-        "tags": ["ai-memory", "chromadb", "semantic-search"],
-        "serverAddress": "http://mempalace.mempalace.svc.cluster.local:8000/mcp",
-        "registeredTools": ["mempalace_status", "mempalace_search", "mempalace_add_drawer", "mempalace_list_drawers", "mempalace_export_drawer", "mempalace_import_drawer", "mempalace_create_relationship", "mempalace_search_relationships", "mempalace_list_rooms", "mempalace_list_relationship_types"],
-        "documentationUrl": "https://github.com/aicatalyst-team/mempalace-openshift",
-        "icon": "🏛️"
-      }
-    ]
-EOF
+oc apply -f aramco-mcp-lifecycle/hardening/native-mcp-catalog-registration.yaml
+oc patch odhdashboardconfig odh-dashboard-config -n redhat-ods-applications \
+  --type=merge -p '{"spec":{"dashboardConfig":{"mcpCatalog":true}}}'
 ```
 
 **Verify it appears in the dashboard:**
 1. Navigate to **OpenShift AI home** → **AI hub** (top menu)
 2. Click **Browse, manage, and deploy models and MCP servers** → **MCP servers**
-3. You should see **MemPalace** listed with its category, description, and icon
+3. The native MCP servers tab should show the catalog-supported **Red Hat
+   OpenShift MCP server**. The Gen AI chat MCP selector should offer the
+   federated Aramco gateway, which exposes both OpenShift MCP and MemPalace
+   tools through one connection.
 
-The UI now discovers MemPalace through the MCPServerRegistration CRD (federated tools) and the ConfigMap (discoverable metadata). This is the **platform-native integration point** for custom MCP servers.
+The gateway continues to federate both backends through the MCPServerRegistration
+CRDs. The ConfigMap makes the secured Aramco gateway selectable in Gen AI chat,
+while the native AI Hub tab is populated by the catalog-supported OpenShift MCP
+entry. These are complementary platform integration points.
 
 ## Phase 2: Harden — Close the Three Gaps
 
@@ -294,9 +295,9 @@ The agent will:
 1. Get an OIDC token from your mcp realm (via client_credentials)
 2. Call `initialize` + `tools/list` through the secured edge
 3. Pass the federated tools to MaaS Granite
-4. Granite chooses a tool (e.g., `mempalace_search`)
-5. The agent executes it through the gateway
-6. Granite synthesizes a grounded answer from the result
+4. The agent performs read-only grounding calls to OpenShift MCP and MemPalace
+5. Granite synthesizes from both live results and may choose additional tools
+6. MLflow records each hop and duration
 
 **Example output:**
 ```
@@ -304,13 +305,16 @@ The agent will:
 [AUTH] got JWT (1345 chars)
 [MCP] initialize via OIDC-secured edge…
 [MCP] gateway: Kuadrant MCP Gateway (session=...)
-[MCP] discovered 33 federated tools
+[MCP] discovered 46 federated tools
 [TASK] Search my memory palace for OIDC enforcement...
 [LLM] turn 1: asking MaaS Granite to decide…
 [LLM] chose tool: mempalace_search({"query": "OIDC authentication"})
 [MCP] executing mempalace_search through the OIDC-secured gateway…
 [MCP] observation: {...retrieved drawers...}
 [LLM] turn 2: asking MaaS Granite to decide…
+
+[MCP] grounding probe: resources_get (OpenShift MCP) through the OIDC-secured gateway…
+[MCP] grounding probe: mempalace_search (MemPalace) through the OIDC-secured gateway…
 
 === FINAL ANSWER (MaaS Granite, grounded in MCP tools) ===
 OIDC authentication on the MCP gateway is enforced by an Envoy jwt_authn edge...
@@ -332,10 +336,10 @@ cd aramco-mcp-lifecycle/maas-mcp-roundtrip/webapp
 The UI shows the full pipeline in real time:
 1. **RHBK OIDC** — token issued
 2. **Envoy edge** — JWT validated → 200
-3. **MCP Gateway** — 33 tools discovered
-4. **MaaS Granite** — chose a tool
-5. **MemPalace** — tool executed
-6. **Granite** — synthesized answer
+3. **MCP Gateway** — 46 federated tools discovered
+4. **OpenShift MCP + MemPalace** — both backends called
+5. **MaaS Granite** — synthesized the grounded answer
+6. **MLflow** — run link exposes timings, tool calls, and status
 
 ---
 
@@ -343,11 +347,12 @@ The UI shows the full pipeline in real time:
 
 | Component | Endpoint | Notes |
 |-----------|----------|-------|
-| **Open MCP demo** | `mcp-gateway.apps.ocp-gb...` | Unauth, 29+ tools |
+| **Open MCP demo** | `mcp-gateway.apps.ocp-gb...` | Unauth, 46 federated tools |
 | **Secured MCP** | `https://mcp-secure.apps.ocp-gb...` | OIDC-enforced edge, 401/200 |
 | **MaaS LLM** | `litemaas-litellm-litemaas.apps...` | Granite via LiteLLM |
 | **RHBK** | `mcp-keycloak.apps.ocp-gb...` | realm `mcp`, client `mcp-gateway-client` |
 | **Hosted demo UI** | `maas-mcp-demo-maas-mcp-demo.apps...` | FastAPI, click-to-run |
+| **MLflow** | `https://mlflow-praxis-verified.apps...` | `aramco-mcp-maas-roundtrip` experiment |
 
 ## Troubleshooting
 
@@ -359,7 +364,7 @@ The UI shows the full pipeline in real time:
 - Confirm `client_id` and `client_secret` match the realm's `mcp-gateway-client`.
 
 **Granite returns empty answer:**
-- Check the tool list is populated (33+ tools).
+- Check the tool list is populated (46 federated tools).
 - Ensure MemPalace has been seeded with data (`./run.sh --seed`).
 
 **Demo UI 500 error:**
@@ -372,7 +377,7 @@ The UI shows the full pipeline in real time:
 
 - **Per-tool authorization** — Kuadrant `AuthPolicy` with tool-level RBAC (identity-based filtering)
 - **Rate limiting** — Kuadrant `RateLimitPolicy` per client/tool
-- **Multiple backends** — Register additional MCP servers; the model gains their tools automatically
+- **Multiple backends** — The live demo now registers OpenShift MCP plus MemPalace; the model gains both tool sets automatically
 - **Native `AuthPolicy`** — When the Tech Preview defect is fixed, replace the Envoy edge with a native Kuadrant `AuthPolicy` on the gateway (same issuer, same realm, no client changes)
 
 ---

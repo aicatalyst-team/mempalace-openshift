@@ -11,6 +11,7 @@
 set -euo pipefail
 DEMO_NS="${DEMO_NS:-mcp-lifecycle-demo}"
 SKIP_WAIT="${SKIP_WAIT:-}"
+SECURE_MCP_URL="${SECURE_MCP_URL:-https://mcp-secure.apps.ocp-gb.ibm.redhataicatalyst.com/mcp}"
 GIT_ROOT="$(git rev-parse --show-toplevel)"
 HARDENING="$GIT_ROOT/aramco-mcp-lifecycle/hardening"
 ROUNDTRIP="$GIT_ROOT/aramco-mcp-lifecycle/maas-mcp-roundtrip"
@@ -33,12 +34,27 @@ oc get mcpserverregistration mempalace -n mcp-gateway-system &>/dev/null || \
   fail "MemPalace not registered. Run Phase 1 from the runbook first."
 TOOLS=$(oc get mcpserverregistration mempalace -n mcp-gateway-system -o jsonpath='{.status.discoveredTools}' 2>/dev/null)
 echo "  MemPalace federation: READY=True, $TOOLS tools discovered"
+if oc get mcpserverregistration openshift-mcp -n mcp-gateway-system &>/dev/null; then
+  OS_TOOLS=$(oc get mcpserverregistration openshift-mcp -n mcp-gateway-system -o jsonpath='{.status.discoveredTools}' 2>/dev/null)
+  echo "  OpenShift MCP federation: READY=True, $OS_TOOLS tools discovered"
+else
+  echo "  OpenShift MCP federation: not registered"
+  echo "    → Apply $HARDENING/openshift-mcp-server.yaml for the second backend"
+fi
 
 CM_EXISTS=$(oc get cm gen-ai-aa-mcp-servers -n redhat-ods-applications &>/dev/null && echo "yes" || echo "no")
 if [ "$CM_EXISTS" = "yes" ]; then
   echo "  MemPalace UI catalog: registered in gen-ai-aa-mcp-servers ConfigMap"
-  echo "    → Visible in AI hub: https://rh-ai.apps.ocp-gb.ibm.redhataicatalyst.com/"
-  pass "Federation and UI discovery verified"
+  NATIVE_CM=$(oc get cm mcp-catalog-sources -n rhoai-model-registries &>/dev/null && echo "yes" || echo "no")
+  if [ "$NATIVE_CM" = "yes" ]; then
+    echo "  Native AI Hub MCP catalog: registered in mcp-catalog-sources"
+    echo "    → Visible in AI hub: https://rh-ai.apps.ocp-gb.ibm.redhataicatalyst.com/"
+    pass "Federation and both UI discovery paths verified"
+  else
+    echo "  Native AI Hub MCP catalog: not registered (mcp-catalog-sources not found)"
+    echo "    → Apply native-mcp-catalog-registration.yaml for the separate MCP servers tab"
+    pass "Federation and Gen AI chat discovery verified"
+  fi
 else
   echo "  MemPalace UI catalog: NOT registered (ConfigMap not found)"
   echo "    → Run Phase 1.3 from the runbook to register with the dashboard"
@@ -68,19 +84,13 @@ if [ "$EDGE_READY" != "1" ]; then
   echo "  Envoy OIDC edge not deployed. Skipping live test."
   echo "  (Deploy via: oc apply -f $HARDENING/oidc-edge-envoy-jwt.yaml)"
 else
-  GW_ADDR=$(oc get gateway mcp-gateway -n mcp-gateway-system -o jsonpath='{.status.addresses[0].value}' 2>/dev/null || echo "")
-  if [ -z "$GW_ADDR" ]; then
-    echo "  (Gateway not reachable from this machine; skipping curl test)"
-  else
-    echo "  Testing: POST /mcp initialize (no token → 401)"
-    NOAUTH=$(curl -s -o /dev/null -w '%{http_code}' -m 15 -X POST "http://${GW_ADDR}:8443/mcp" \
-      -H "Host: mcp-gateway.apps.ocp-gb.ibm.redhataicatalyst.com" \
-      -H 'Content-Type: application/json' \
-      -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' 2>/dev/null)
-    echo "    Result: $NOAUTH"
-    [ "$NOAUTH" = "401" ] && pass "OIDC enforced (unauthenticated → 401)" || \
-      echo "  (Note: got $NOAUTH; if not testing against the live cluster, this is expected)"
-  fi
+  echo "  Testing: POST $SECURE_MCP_URL (no token → 401)"
+  NOAUTH=$(curl -s -o /dev/null -w '%{http_code}' -m 15 -X POST "$SECURE_MCP_URL" \
+    -H 'Content-Type: application/json' \
+    -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{}}' 2>/dev/null)
+  echo "    Result: $NOAUTH"
+  [ "$NOAUTH" = "401" ] && pass "OIDC enforced at the secured edge (unauthenticated → 401)" || \
+    echo "  (Note: got $NOAUTH; set SECURE_MCP_URL for another cluster or check the edge route)"
 fi
 pause
 
@@ -94,8 +104,9 @@ echo "  This will:"
 echo "    1. Get an OIDC token from RHBK (mcp realm)"
 echo "    2. Discover federated tools via the gateway"
 echo "    3. Seed MemPalace with demo memories"
-echo "    4. Ask MaaS Granite to search the memory palace"
-echo "    5. Return a grounded answer"
+echo "    4. Ground against OpenShift MCP and MemPalace"
+echo "    5. Record the round trip in MLflow"
+echo "    6. Return a grounded answer"
 echo ""
 pause
 cd "$ROUNDTRIP"
@@ -126,14 +137,14 @@ pause
 
 # Summary
 step "SUMMARY"
-echo "✓ Phase 1: MemPalace federated behind the MCP Gateway (33 tools)"
+echo "✓ Phase 1: MemPalace + OpenShift MCP federated behind the MCP Gateway (46 tools)"
 echo "✓ Phase 2: Three hardening gaps identified + fixes ready (see runbook)"
 echo "✓ Phase 3: OIDC enforced at the edge (401 / 200)"
 echo "✓ Phase 4: MaaS Granite model reasons over federated tools (live)"
 echo "✓ Phase 5: Hosted web UI (click-to-run, visualizes full pipeline)"
 echo ""
 echo "The entire OpenShift AI stack is now working end-to-end:"
-echo "  RHBK OIDC → Envoy edge → Kuadrant MCP Gateway → MaaS Granite → MemPalace"
+echo "  RHBK OIDC → Envoy edge → Kuadrant MCP Gateway → OpenShift MCP + MemPalace → MaaS Granite → MLflow"
 echo ""
 echo "Next steps:"
 echo "  • Read the blog: $GIT_ROOT/aramco-mcp-lifecycle/BLOG_FULLSTACK_MCP_MAAS.md"

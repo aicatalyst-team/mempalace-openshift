@@ -2,8 +2,8 @@
 
 A live, end-to-end demonstration that ties the entire Red Hat OpenShift AI stack
 together in a single agent loop: a **MaaS-hosted LLM** reasons over tools served
-by an **MCP gateway**, secured by **OIDC**, backed by a real **MCP server** with
-semantic search.
+by an **MCP gateway**, secured by **OIDC**, backed by two real MCP servers, with
+the complete round trip recorded in **MLflow**.
 
 ## What it demonstrates (every hop is real)
 
@@ -11,21 +11,29 @@ semantic search.
   RHBK (OIDC)                 MaaS / LiteLLM (model serving)
       │  client_credentials        │  granite-31-8b-lab-v1 (vLLM)
       ▼                            ▼
-  JWT ─▶ Envoy jwt_authn edge ─▶ Kuadrant MCP Gateway ─▶ MemPalace MCP server
-         (401 / 200)               (federates 33 tools)    (ChromaDB semantic search)
-                                          ▲                        │
-                                          └──── tools/call ────────┘
+  JWT ─▶ Envoy jwt_authn edge ─▶ Kuadrant MCP Gateway ─┬▶ OpenShift MCP server
+         (401 / 200)               (46 federated tools) └▶ MemPalace MCP server
+                                                        (cluster + ChromaDB)
+                                          ▲                         │
+                                          └──── tools/call ──────────┘
+                                                                    │
+                                              MLflow experiment ◀───┘
    Agent (ReAct loop): LLM decides a tool → gateway executes it → LLM synthesizes
 ```
 
 1. **Auth** — the agent gets an OIDC token from the dedicated RHBK `mcp` realm.
 2. **Discover** — `initialize` + `tools/list` through the OIDC-secured edge → the
-   Kuadrant MCP gateway returns its federated tool catalog (MemPalace's tools).
+   Kuadrant MCP gateway returns the federated catalog (29 MemPalace tools + 13
+   read-only OpenShift MCP tools).
 3. **Reason** — the MaaS-served **Granite** model is given the task + tool catalog
    and chooses which tool to call.
-4. **Act** — the agent executes the chosen tool via the gateway (e.g.
-   `mempalace_search`, semantic search over ChromaDB).
-5. **Synthesize** — the tool result is fed back; Granite produces the final,
+4. **Act** — the agent executes read-only grounding probes via the gateway
+   (`resources_get` against the cluster and `mempalace_search` over ChromaDB).
+   Granite then reasons over both live observations and may choose additional
+   tools.
+5. **Observe** — each OIDC, MCP, MaaS, and tool hop is written to the live
+   MLflow experiment `aramco-mcp-maas-roundtrip`.
+6. **Synthesize** — the observations are fed back; Granite produces the final,
    grounded answer.
 
 > Tool use is driven by **structured JSON prompting (ReAct)** rather than the
@@ -42,6 +50,8 @@ semantic search.
 | Security | RHBK realm `mcp` + Envoy `jwt_authn` edge | `keycloak` ns / `mcp-gateway-system` |
 | Federation | Kuadrant MCP Gateway (Tech Preview) | `mcp-gateway-system` |
 | Tools/data | MemPalace MCP server (ChromaDB) | `mempalace` ns |
+| Tools/data | Red Hat OpenShift MCP server, read-only | `openshift-mcp` ns |
+| Telemetry | MLflow experiment and run traces | `praxis-verified` ns |
 
 ## Hosted demo (click-to-run UI)
 
@@ -69,23 +79,59 @@ oc login --token=<fresh> --server=https://api.ocp-gb.ibm.redhataicatalyst.com:64
 `run.sh` derives all credentials from the cluster (LiteLLM master key; `mcp`
 realm client secret via the RHBK admin API) — **no secrets are stored in git**.
 
-## Example (verified live 2026-09-13)
+## Example (verified live 2026-09-16)
 
-Task: *"Search my memory palace for how OIDC authentication is enforced on the MCP
-gateway, then summarize."*
+Task: *"Use the OpenShift MCP server to inspect the openshift-mcp deployment, then
+use MemPalace to search for the OIDC gateway architecture. Summarize both results."*
 
-Granite chose `mempalace_search`, the gateway executed it (OIDC-checked), semantic
-search returned the stored drawers, and Granite answered:
+The gateway returned **46 federated tools**. The agent called an OpenShift MCP tool
+and `mempalace_search` through the OIDC-checked gateway before Granite synthesized
+the answer; the app recorded the hop timings and result in MLflow. The hosted UI
+links directly to the run:
+
+`https://mlflow-praxis-verified.apps.ocp-gb.ibm.redhataicatalyst.com/#/experiments/2/runs/<run-id>`
+
+The corresponding grounded answer includes:
 
 > "OIDC authentication on the MCP gateway is enforced by an Envoy jwt_authn edge
 > that validates RHBK-issued JWTs against the mcp realm JWKS. Missing or invalid
 > tokens result in HTTP 401, while valid tokens are passed to the Kuadrant MCP
 > federation gateway…"
 
+## MLflow telemetry
+
+The demo uses the MLflow REST API directly, so it has no Python MLflow dependency
+and remains runnable from the CLI or the hosted FastAPI container. Defaults are:
+
+```text
+MLFLOW_TRACKING_URI=https://mlflow-praxis-verified.apps.ocp-gb.ibm.redhataicatalyst.com
+MLFLOW_EXPERIMENT_NAME=aramco-mcp-maas-roundtrip
+```
+
+Every run records OIDC, MCP initialize, tools/list, each MaaS turn, each MCP tool
+call, duration metrics, server labels, tool counts, and success/failure status.
+Tracking failures are non-blocking and are reported in the UI as unavailable
+telemetry rather than breaking the MCP/MaaS demo.
+
+## Deploy the second MCP server
+
+The second server is the Red Hat OpenShift MCP server already present in the
+OpenShift AI native MCP catalog. The prepared manifest uses the same catalog image
+(`registry.redhat.io/openshift-mcp-tech-preview/openshift-mcp-server-rhel9:0.4`),
+a read-only `view` service account, and a private gateway backend route:
+
+```bash
+oc apply -f ../hardening/openshift-mcp-server.yaml
+oc get mcpserverregistration mempalace openshift-mcp -n mcp-gateway-system
+```
+
+The `cluster_auth_mode = "kubeconfig"` setting is intentional: the OIDC edge
+bearer token is for gateway authentication, while Kubernetes API calls use the
+server pod's read-only service account.
+
 ## Notes / next steps
 
-- **Containerize + deploy** the agent (e.g. in `aramco-demo`) for a hosted demo
-  UI instead of a local script.
+- **Hosted UI:** rebuild with `./webapp/build-and-deploy.sh` after source changes.
 - **OIDC note:** the edge (`oidc-edge-envoy-jwt.yaml`) is the live workaround for
   the TP wasm-shim defect (see `../RH_TECH_PREVIEW_DEFECTS.md`). At GA this becomes
   a native Kuadrant `AuthPolicy` on the gateway — the agent is unaffected.

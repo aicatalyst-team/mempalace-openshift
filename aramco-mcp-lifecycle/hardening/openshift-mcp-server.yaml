@@ -1,0 +1,131 @@
+# Red Hat OpenShift MCP Server from the native OpenShift AI MCP catalog.
+# It is deliberately read-only and exposes cluster inspection tools through
+# the same secured, federated MCP gateway as MemPalace.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: openshift-mcp
+  labels:
+    app.kubernetes.io/part-of: aramco-mcp-demo
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: openshift-mcp-viewer
+  namespace: openshift-mcp
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: openshift-mcp-viewer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: ServiceAccount
+    name: openshift-mcp-viewer
+    namespace: openshift-mcp
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openshift-mcp-server-config
+  namespace: openshift-mcp
+data:
+  config.toml: |
+    log_level = 5
+    port = "8080"
+    read_only = true
+    # The gateway forwards its RHBK bearer token. Always use this pod's
+    # read-only service-account token for Kubernetes API calls instead.
+    cluster_auth_mode = "kubeconfig"
+    toolsets = ["core", "config"]
+---
+apiVersion: mcp.x-k8s.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: openshift-mcp
+  namespace: openshift-mcp
+  labels:
+    app.kubernetes.io/part-of: aramco-mcp-demo
+spec:
+  source:
+    type: ContainerImage
+    containerImage:
+      ref: registry.redhat.io/openshift-mcp-tech-preview/openshift-mcp-server-rhel9:0.4
+  config:
+    path: /mcp
+    port: 8080
+    arguments:
+      - --config
+      - /etc/mcp-config/config.toml
+    storage:
+      - path: /etc/mcp-config
+        permissions: ReadOnly
+        source:
+          type: ConfigMap
+          configMap:
+            name: openshift-mcp-server-config
+  runtime:
+    replicas: 1
+    security:
+      serviceAccountName: openshift-mcp-viewer
+---
+apiVersion: gateway.networking.k8s.io/v1beta1
+kind: ReferenceGrant
+metadata:
+  name: allow-mcp-gateway
+  namespace: openshift-mcp
+spec:
+  from:
+    - group: gateway.networking.k8s.io
+      kind: HTTPRoute
+      namespace: mcp-gateway-system
+  to:
+    - group: ""
+      kind: Service
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: openshift-mcp-route
+  namespace: mcp-gateway-system
+spec:
+  hostnames:
+    - openshift-mcp-backend
+  parentRefs:
+    - name: mcp-gateway
+      namespace: mcp-gateway-system
+      sectionName: mcp
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: openshift-mcp
+          namespace: openshift-mcp
+          port: 8080
+---
+apiVersion: mcp.kuadrant.io/v1alpha1
+kind: MCPServerRegistration
+metadata:
+  name: openshift-mcp
+  namespace: mcp-gateway-system
+spec:
+  category:
+    - cluster-management
+    - observability
+  hint: Read-only OpenShift and Kubernetes cluster inspection tools from the Red Hat catalog server.
+  path: /mcp
+  state: Enabled
+  tags:
+    - Red Hat
+    - OpenShift
+    - read-only
+    - cluster-management
+  targetRef:
+    group: gateway.networking.k8s.io
+    kind: HTTPRoute
+    name: openshift-mcp-route

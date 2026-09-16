@@ -1,6 +1,6 @@
-# OpenShift AI UI Catalog Registration for MemPalace
+# OpenShift AI UI Catalog Registration for the federated Aramco MCP gateway
 #
-# This ConfigMap registers MemPalace in the Gen AI chat MCP selector. The
+# This ConfigMap registers the federated gateway in the Gen AI chat MCP selector. The
 # native AI Hub MCP Catalog is configured separately in
 # native-mcp-catalog-registration.yaml.
 #
@@ -20,5 +20,5 @@ data:
     {
       "url": "https://mcp-secure.apps.ocp-gb.ibm.redhataicatalyst.com/mcp",
       "transport": "streamable-http",
-      "description": "MemPalace semantic memory MCP server for the Saudi Aramco OpenShift AI demo"
+      "description": "Saudi Aramco MCP Gateway: MemPalace semantic memory plus the read-only OpenShift MCP server"
     }
