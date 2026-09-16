@@ -22,5 +22,8 @@ oc create secret generic maas-mcp-creds -n "$NS" \
   --dry-run=client -o yaml | oc apply -n "$NS" -f -
 
 oc apply -n "$NS" -f "$HERE/deploy.yaml"
+# envFrom reads Secret values only when the pod starts; restart after rotating
+# the Keycloak client secret so the hosted demo does not retain stale creds.
+oc rollout restart deploy/maas-mcp-demo -n "$NS"
 oc rollout status deploy/maas-mcp-demo -n "$NS" --timeout=180s
 echo "URL: https://$(oc get route maas-mcp-demo -n "$NS" -o jsonpath='{.spec.host}')"
