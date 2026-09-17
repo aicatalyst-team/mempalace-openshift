@@ -4,6 +4,20 @@
 
 This runbook walks you through deploying, federating, hardening, and connecting a model to the MemPalace MCP server on OpenShift AI — covering all three production gaps and live OIDC authentication.
 
+## Current Presenter Flow
+
+For the complete Saudi Aramco story, use the Act-based CLI driver and its
+presenter guide:
+
+```bash
+STEP_MODE=1 ./demos/mcp-gateway-lifecycle-demo.sh
+```
+
+See [`aramco-mcp-lifecycle/SAUDI_ARAMCO_E2E_STORY.md`](../aramco-mcp-lifecycle/SAUDI_ARAMCO_E2E_STORY.md)
+for the matching UI handoff, exact task, MLflow checkpoints, and the current
+Tech Preview workaround language. This runbook remains the deployment and
+troubleshooting reference.
+
 ## Prerequisites
 
 - **OpenShift cluster** (api.ocp-gb.ibm.redhataicatalyst.com or equivalent)

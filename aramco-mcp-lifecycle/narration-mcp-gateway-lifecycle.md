@@ -1,5 +1,10 @@
 # Narration Script: MCP Server Lifecycle on OpenShift AI
 
+> **Current full-stack presenter flow:** use
+> [`SAUDI_ARAMCO_E2E_STORY.md`](SAUDI_ARAMCO_E2E_STORY.md) with
+> `STEP_MODE=1 ./demos/mcp-gateway-lifecycle-demo.sh`. This older narration is
+> retained as a gateway protocol deep-dive.
+
 **Duration:** ~8 minutes  
 **Presenter:** Gerald Trotman  
 **Recording:** QuickTime/OBS with live narration  

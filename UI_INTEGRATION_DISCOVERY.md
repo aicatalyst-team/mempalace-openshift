@@ -131,7 +131,7 @@ data:
 ### Updated Documentation
 - **`demos/MCP_LIFECYCLE_RUNBOOK.md`** — Phase 1.3 now explains the UI discovery mechanism and references the manifest
 - **`aramco-mcp-lifecycle/BLOG_FULLSTACK_MCP_MAAS.md`** — New section explaining dual-path registration (federation vs. UI)
-- **`demos/mcp-gateway-lifecycle-demo.sh`** — Phase 1 now verifies both federation (CRD) and UI discovery (ConfigMap)
+- **`demos/mcp-gateway-lifecycle-demo.sh`** — canonical Act-based presenter flow verifies federation, OIDC, MaaS, MLflow, and UI discovery
 
 ---
 
@@ -202,7 +202,7 @@ The native catalog uses the separate YAML schema in `native-mcp-catalog-registra
 - ✅ **Created:** `aramco-mcp-lifecycle/hardening/ui-catalog-registration.yaml` (ConfigMap manifest)
 - ✅ **Updated:** `demos/MCP_LIFECYCLE_RUNBOOK.md` (Phase 1.3: UI discovery)
 - ✅ **Updated:** `aramco-mcp-lifecycle/BLOG_FULLSTACK_MCP_MAAS.md` (dual-path registration section)
-- ✅ **Updated:** `demos/mcp-gateway-lifecycle-demo.sh` (Phase 1: verify both paths)
+- ✅ **Updated:** `aramco-mcp-lifecycle/mcp-gateway-lifecycle-demo.sh` (full-stack Act flow; `demos/` is the canonical wrapper)
 - ✅ **Added to memory:** `reference_mcp_ui_discovery_configmap.md` (for future sessions)
 
 ---
